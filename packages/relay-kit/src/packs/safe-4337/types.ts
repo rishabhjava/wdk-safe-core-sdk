@@ -46,6 +46,22 @@ export type PaymasterOptions =
     ))
   | undefined
 
+export type Erc7579ModuleConfig = {
+  address: string
+  context: string
+}
+
+export type Erc7579Config = {
+  safe4337ModuleAddress: string
+  launchpadAddress: string
+  attesters: string[]
+  attestersThreshold: number
+  validators?: Erc7579ModuleConfig[]
+  executors?: Erc7579ModuleConfig[]
+  fallbacks?: Erc7579ModuleConfig[]
+  hooks?: Erc7579ModuleConfig[]
+}
+
 export type Safe4337InitOptions = {
   provider: SafeProviderConfig['provider']
   signer?: SafeProviderConfig['signer']
@@ -60,6 +76,7 @@ export type Safe4337InitOptions = {
   options: ExistingSafeOptions | PredictedSafeOptions
   paymasterOptions?: PaymasterOptions
   onchainAnalytics?: OnchainAnalyticsProps
+  erc7579?: Erc7579Config
 }
 
 export type Safe4337Options = {

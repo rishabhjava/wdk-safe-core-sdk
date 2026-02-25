@@ -364,6 +364,125 @@ describe('Safe4337Pack', () => {
     })
   })
 
+  describe('ERC-7579 support', () => {
+    const erc7579Config = {
+      safe4337ModuleAddress: '0x7579EE8307284F293B1927136486880611F20002',
+      launchpadAddress: '0x7579011aB74c46090561ea277Ba79D510c6C00ff',
+      attesters: ['0x000000000069E2a187AEFFb852bE3dF9Ea2806DB'],
+      attestersThreshold: 1,
+      validators: [
+        {
+          address: '0x0000000000000000000000000000000000000001',
+          context: '0x'
+        }
+      ]
+    }
+
+    it('should throw if safe4337ModuleAddress is missing from erc7579 config', async () => {
+      await expect(
+        createSafe4337Pack({
+          options: { owners: [fixtures.OWNER_1], threshold: 1 },
+          safeModulesVersion: '0.3.0',
+          erc7579: {
+            ...erc7579Config,
+            safe4337ModuleAddress: ''
+          }
+        })
+      ).rejects.toThrow(
+        'ERC-7579 configuration requires both safe4337ModuleAddress and launchpadAddress'
+      )
+    })
+
+    it('should throw if launchpadAddress is missing from erc7579 config', async () => {
+      await expect(
+        createSafe4337Pack({
+          options: { owners: [fixtures.OWNER_1], threshold: 1 },
+          safeModulesVersion: '0.3.0',
+          erc7579: {
+            ...erc7579Config,
+            launchpadAddress: ''
+          }
+        })
+      ).rejects.toThrow(
+        'ERC-7579 configuration requires both safe4337ModuleAddress and launchpadAddress'
+      )
+    })
+
+    it('should throw if no attesters are provided', async () => {
+      await expect(
+        createSafe4337Pack({
+          options: { owners: [fixtures.OWNER_1], threshold: 1 },
+          safeModulesVersion: '0.3.0',
+          erc7579: {
+            ...erc7579Config,
+            attesters: []
+          }
+        })
+      ).rejects.toThrow(
+        'ERC-7579 configuration requires at least one attester and a non-zero attestersThreshold'
+      )
+    })
+
+    it('should enable both the 7579 module and launchpad in the setup transaction', async () => {
+      const encodeFunctionDataSpy = jest.spyOn(viem, 'encodeFunctionData')
+
+      await createSafe4337Pack({
+        options: { owners: [fixtures.OWNER_1], threshold: 1 },
+        safeModulesVersion: '0.3.0',
+        erc7579: erc7579Config
+      })
+
+      expect(encodeFunctionDataSpy).toHaveBeenCalledWith({
+        abi: constants.ABI,
+        functionName: 'enableModules',
+        args: [[erc7579Config.safe4337ModuleAddress, erc7579Config.launchpadAddress]]
+      })
+    })
+
+    it('should include the launchpad initSafe7579 call in the setup batch', async () => {
+      const encodeFunctionDataSpy = jest.spyOn(viem, 'encodeFunctionData')
+
+      await createSafe4337Pack({
+        options: { owners: [fixtures.OWNER_1], threshold: 1 },
+        safeModulesVersion: '0.3.0',
+        erc7579: erc7579Config
+      })
+
+      expect(encodeFunctionDataSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          functionName: 'initSafe7579',
+          args: expect.arrayContaining([
+            erc7579Config.safe4337ModuleAddress,
+            erc7579Config.validators!.map((v) => ({
+              module: v.address,
+              initData: v.context
+            }))
+          ])
+        })
+      )
+    })
+
+    it('should use the 7579 module address as the fallbackHandler', async () => {
+      const safeCreateSpy = jest.spyOn(Safe, 'init')
+
+      await createSafe4337Pack({
+        options: { owners: [fixtures.OWNER_1], threshold: 1 },
+        safeModulesVersion: '0.3.0',
+        erc7579: erc7579Config
+      })
+
+      expect(safeCreateSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          predictedSafe: expect.objectContaining({
+            safeAccountConfig: expect.objectContaining({
+              fallbackHandler: erc7579Config.safe4337ModuleAddress
+            })
+          })
+        })
+      )
+    })
+  })
+
   describe('When creating a new SafeOperation', () => {
     let safe4337Pack: Safe4337Pack
     let transferUSDC: MetaTransactionData

@@ -60,7 +60,8 @@ import {
   ABI,
   DEFAULT_SAFE_VERSION,
   DEFAULT_SAFE_MODULES_VERSION,
-  RPC_4337_CALLS
+  RPC_4337_CALLS,
+  ERC7579_LAUNCHPAD_ABI
 } from './constants'
 import {
   entryPointToSafeModules,
@@ -390,7 +391,8 @@ export class Safe4337Pack extends RelayKitBasePack<{
       bundlerUrl,
       customContracts,
       paymasterOptions,
-      onchainAnalytics
+      onchainAnalytics,
+      erc7579
     } = initOptions
 
     let protocolKit: Safe
@@ -425,6 +427,20 @@ export class Safe4337Pack extends RelayKitBasePack<{
       throw new Error(
         `Safe4337Module and/or SafeModuleSetup not available for chain ${network} and modules version ${safeModulesVersion}`
       )
+    }
+
+    if (erc7579) {
+      if (!erc7579.safe4337ModuleAddress || !erc7579.launchpadAddress) {
+        throw new Error(
+          'ERC-7579 configuration requires both safe4337ModuleAddress and launchpadAddress'
+        )
+      }
+      if (!erc7579.attesters?.length || !erc7579.attestersThreshold) {
+        throw new Error(
+          'ERC-7579 configuration requires at least one attester and a non-zero attestersThreshold'
+        )
+      }
+      safe4337ModuleAddress = erc7579.safe4337ModuleAddress
     }
 
     let safeWebAuthnSharedSignerAddress = customContracts?.safeWebAuthnSharedSignerAddress
@@ -473,23 +489,66 @@ export class Safe4337Pack extends RelayKitBasePack<{
 
       // we need to create a batch to setup the 4337 Safe Account
 
-      // first setup transaction: Enable 4337 module
-      const enable4337ModuleTransaction = {
+      const modulesToEnable: string[] = [safe4337ModuleAddress]
+
+      if (erc7579) {
+        modulesToEnable.push(erc7579.launchpadAddress)
+      }
+
+      // first setup transaction: Enable 4337 module (and launchpad if ERC-7579)
+      const enableModulesTransaction = {
         to: safeModulesSetupAddress,
         value: '0',
         data: encodeFunctionData({
           abi: ABI,
           functionName: 'enableModules',
-          args: [[safe4337ModuleAddress]]
+          args: [modulesToEnable]
         }),
-        operation: OperationType.DelegateCall // DelegateCall required for enabling the 4337 module
+        operation: OperationType.DelegateCall
       }
 
-      const setupTransactions = [enable4337ModuleTransaction]
+      const setupTransactions = [enableModulesTransaction]
+
+      if (erc7579) {
+        const { launchpadAddress, validators, executors, fallbacks, hooks, attesters, attestersThreshold } = erc7579
+
+        const initData = encodeFunctionData({
+          abi: ERC7579_LAUNCHPAD_ABI,
+          functionName: 'initSafe7579',
+          args: [
+            safe4337ModuleAddress as `0x${string}`,
+            (validators || []).map((v) => ({
+              module: v.address as `0x${string}`,
+              initData: v.context as `0x${string}`
+            })),
+            (executors || []).map((e) => ({
+              module: e.address as `0x${string}`,
+              initData: e.context as `0x${string}`
+            })),
+            (fallbacks || []).map((f) => ({
+              module: f.address as `0x${string}`,
+              initData: f.context as `0x${string}`
+            })),
+            (hooks || []).map((h) => ({
+              module: h.address as `0x${string}`,
+              initData: h.context as `0x${string}`
+            })),
+            attesters.map((a) => a as `0x${string}`),
+            attestersThreshold
+          ]
+        })
+
+        setupTransactions.push({
+          to: launchpadAddress,
+          value: '0',
+          data: initData,
+          operation: OperationType.DelegateCall
+        })
+      }
 
       // Initialize deployment variables early
-      let deploymentTo = enable4337ModuleTransaction.to
-      let deploymentData = enable4337ModuleTransaction.data
+      let deploymentTo = enableModulesTransaction.to
+      let deploymentData = enableModulesTransaction.data
 
       const isApproveTransactionRequired =
         !!paymasterOptions &&
